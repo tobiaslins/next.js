@@ -168,3 +168,49 @@ describe('wrapWithMutableAccessCheck', () => {
     })
   })
 })
+
+describe('MutableRequestCookiesAdapter.wrap copying request cookies', () => {
+  const header = [
+    'plain=1',
+    'empty=',
+    'equals=a=b=c',
+    'spaces=hello%20world',
+    'percent=100%25',
+    'unicode=%E2%9C%93',
+    'quoted="abc"',
+    'jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
+    `long=${'x'.repeat(500)}`,
+  ].join('; ')
+
+  // How the request cookies used to be copied: one `set` per cookie.
+  function copyOneByOne(cookies: RequestCookies) {
+    const responseCookies = new ResponseCookies(new Headers())
+    for (const cookie of cookies.getAll()) {
+      responseCookies.set(cookie)
+    }
+    return responseCookies
+  }
+
+  it('produces the same cookies as setting them one by one', () => {
+    const requestCookies = new RequestCookies(new Headers({ cookie: header }))
+
+    const expected = copyOneByOne(requestCookies)
+    const actual = MutableRequestCookiesAdapter.wrap(requestCookies)
+
+    expect(actual.getAll()).toEqual(expected.getAll())
+    expect(actual.toString()).toEqual(expected.toString())
+    expect((actual as any)._headers.getSetCookie()).toEqual(
+      (expected as any)._headers.getSetCookie()
+    )
+  })
+
+  it('still tracks cookies set after copying', () => {
+    const requestCookies = new RequestCookies(new Headers({ cookie: header }))
+    const actual = MutableRequestCookiesAdapter.wrap(requestCookies)
+
+    actual.set('plain', '2')
+
+    expect(actual.get('plain')?.value).toBe('2')
+    expect(actual.get('equals')?.value).toBe('a=b=c')
+  })
+})

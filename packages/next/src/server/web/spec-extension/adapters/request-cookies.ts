@@ -113,15 +113,41 @@ type ResponseCookie = NonNullable<
   ReturnType<InstanceType<typeof ResponseCookies>['get']>
 >
 
+/**
+ * Copies request cookies into response cookies, storing exactly what
+ * `ResponseCookies#set` would for each one. `set` re-serializes every stored
+ * cookie into the `set-cookie` header on each call, which made copying them
+ * one by one quadratic in the number of cookies on the request. Instead, all
+ * but the last go straight into the parsed map, and the last `set` call
+ * serializes the header once.
+ */
+function copyRequestCookies(
+  requestCookies: RequestCookies,
+  responseCookies: ResponseCookies
+) {
+  const all = requestCookies.getAll()
+  const parsed: unknown = (responseCookies as any)._parsed
+  if (all.length === 0 || !(parsed instanceof Map)) {
+    for (const cookie of all) {
+      responseCookies.set(cookie)
+    }
+    return
+  }
+
+  for (let i = 0; i < all.length - 1; i++) {
+    const { name, value } = all[i]
+    parsed.set(name, { name, value, path: '/' })
+  }
+  responseCookies.set(all[all.length - 1])
+}
+
 export class MutableRequestCookiesAdapter {
   public static wrap(
     cookies: RequestCookies,
     onUpdateCookies?: (cookies: string[]) => void
   ): ResponseCookies {
     const responseCookies = new ResponseCookies(new Headers())
-    for (const cookie of cookies.getAll()) {
-      responseCookies.set(cookie)
-    }
+    copyRequestCookies(cookies, responseCookies)
 
     let modifiedValues: ResponseCookie[] = []
     const modifiedCookies = new Set<string>()
