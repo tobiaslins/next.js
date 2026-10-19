@@ -647,6 +647,11 @@ export abstract class RouteModule<
     )
   }
 
+  private readonly serverUtilsCache = new WeakMap<
+    object,
+    Map<string, ReturnType<typeof getServerUtils>>
+  >()
+
   private async prepareImpl(
     req: IncomingMessage | BaseNextRequest,
     res: ServerResponse | null,
@@ -806,15 +811,28 @@ export abstract class RouteModule<
     // the pathname format (e.g., /app/[slug]).
     const normalizedSrcPage = normalizeAppPath(srcPage)
 
-    const serverUtils = getServerUtils({
-      page: normalizedSrcPage,
-      i18n,
-      basePath,
-      rewrites,
-      pageIsDynamic,
-      trailingSlash: process.env.__NEXT_TRAILING_SLASH as any as boolean,
-      caseSensitive: Boolean(routesManifest.caseSensitive),
-    })
+    // Everything these utils are built from comes from the routes manifest
+    // and the page, so they (including the page's compiled route regex) are
+    // reused across requests. Keyed by the manifest object, so a manifest
+    // that's loaded fresh, like in development, gets new utils.
+    let serverUtilsByPage = this.serverUtilsCache.get(routesManifest)
+    if (serverUtilsByPage === undefined) {
+      serverUtilsByPage = new Map()
+      this.serverUtilsCache.set(routesManifest, serverUtilsByPage)
+    }
+    let serverUtils = serverUtilsByPage.get(normalizedSrcPage)
+    if (serverUtils === undefined) {
+      serverUtils = getServerUtils({
+        page: normalizedSrcPage,
+        i18n,
+        basePath,
+        rewrites,
+        pageIsDynamic,
+        trailingSlash: process.env.__NEXT_TRAILING_SLASH as any as boolean,
+        caseSensitive: Boolean(routesManifest.caseSensitive),
+      })
+      serverUtilsByPage.set(normalizedSrcPage, serverUtils)
+    }
 
     const domainLocale = detectDomainLocale(
       i18n?.domains,

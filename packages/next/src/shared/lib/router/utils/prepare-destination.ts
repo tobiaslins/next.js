@@ -14,6 +14,51 @@ import { getCookieParser } from '../../../../server/api-utils/get-cookie-parser'
 import type { Params } from '../../../../server/request/params'
 import { safePathToRegexp, safeCompile } from './route-match-utils'
 
+type CompiledTemplate = {
+  paramNames: Array<string | number>
+  compile: ReturnType<typeof safeCompile>
+}
+
+// Destinations come from the routes manifest, so every request that matches a
+// rewrite or redirect compiles the same few templates. They're compiled once
+// instead. The cap keeps the cache bounded regardless of the input.
+const MAX_COMPILED_TEMPLATES = 1000
+const compiledTemplates = new Map<string, CompiledTemplate>()
+
+function getCompiledTemplate(
+  template: string,
+  kind: 'path' | 'hostname' | 'value'
+): CompiledTemplate {
+  const cacheKey = `${kind}\0${template}`
+  let compiled = compiledTemplates.get(cacheKey)
+  if (compiled === undefined) {
+    const keys: Key[] = []
+    if (kind !== 'value') {
+      safePathToRegexp(template, keys)
+    }
+    compiled = {
+      paramNames: keys.map((key) => key.name),
+      // we don't validate while compiling the destination since we should
+      // have already validated before we got to this point and validating
+      // breaks compiling destinations with named pattern params from the source
+      // e.g. /something:hello(.*) -> /another/:hello is broken with validation
+      // since compile validation is meant for reversing and not for inserting
+      // params from a separate path-regex into another
+      compile: safeCompile(
+        template,
+        kind === 'hostname'
+          ? { validate: false, encode: encodeURIComponent }
+          : { validate: false }
+      ),
+    }
+    if (compiledTemplates.size >= MAX_COMPILED_TEMPLATES) {
+      compiledTemplates.clear()
+    }
+    compiledTemplates.set(cacheKey, compiled)
+  }
+  return compiled
+}
+
 /**
  * Ensure only a-zA-Z are used for param names for proper interpolating
  * with path-to-regexp
@@ -156,7 +201,7 @@ export function compileNonPath(value: string, params: Params): string {
 
   // the value needs to start with a forward-slash to be compiled
   // correctly
-  return safeCompile(`/${value}`, { validate: false })(params).slice(1)
+  return getCompiledTemplate(`/${value}`, 'value').compile(params).slice(1)
 }
 
 export function parseDestination(args: {
@@ -235,39 +280,15 @@ export function prepareDestination(args: {
     destPath = `${destPath}${parsedDestination.hash}`
   }
 
-  const destParams: (string | number)[] = []
-
-  const destPathParamKeys: Key[] = []
-  safePathToRegexp(destPath, destPathParamKeys)
-  for (const key of destPathParamKeys) {
-    destParams.push(key.name)
-  }
-
-  if (destHostname) {
-    const destHostnameParamKeys: Key[] = []
-    safePathToRegexp(destHostname, destHostnameParamKeys)
-    for (const key of destHostnameParamKeys) {
-      destParams.push(key.name)
-    }
-  }
-
-  const destPathCompiler = safeCompile(
-    destPath,
-    // we don't validate while compiling the destination since we should
-    // have already validated before we got to this point and validating
-    // breaks compiling destinations with named pattern params from the source
-    // e.g. /something:hello(.*) -> /another/:hello is broken with validation
-    // since compile validation is meant for reversing and not for inserting
-    // params from a separate path-regex into another
-    { validate: false }
-  )
+  const destPathTemplate = getCompiledTemplate(destPath, 'path')
+  const destParams: (string | number)[] = [...destPathTemplate.paramNames]
+  const destPathCompiler = destPathTemplate.compile
 
   let destHostnameCompiler
   if (destHostname) {
-    destHostnameCompiler = safeCompile(destHostname, {
-      validate: false,
-      encode: encodeURIComponent,
-    })
+    const destHostnameTemplate = getCompiledTemplate(destHostname, 'hostname')
+    destParams.push(...destHostnameTemplate.paramNames)
+    destHostnameCompiler = destHostnameTemplate.compile
   }
 
   // update any params in query values
