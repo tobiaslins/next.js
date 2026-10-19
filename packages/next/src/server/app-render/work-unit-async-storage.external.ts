@@ -58,6 +58,12 @@ export interface RequestStore extends CommonWorkUnitStore {
   // The cookie object itself is deliberately read only and thus can't be updated.
   cookies: ReadonlyRequestCookies
   readonly mutableCookies: ResponseCookies
+  /**
+   * Whether `mutableCookies` can contain modified cookies. Reading
+   * `mutableCookies` copies every request cookie, so check this first when
+   * only the modifications are needed. Treat `undefined` as `true`.
+   */
+  readonly mayHaveModifiedCookies?: boolean
   readonly userspaceMutableCookies: ResponseCookies
   readonly draftMode: DraftModeProvider
   readonly isHmrRefresh?: boolean

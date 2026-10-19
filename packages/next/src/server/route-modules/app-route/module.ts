@@ -431,7 +431,9 @@ export class AppRouteRouteModule extends RouteModule<
       // TODO leaving the gate here b/c it indicates that we might not actually
       // want to do this on every handler invocation. During prerender there
       // should be no mutableCookies because then they'd be dynamic.
-      appendMutableCookies(headers, requestStore.mutableCookies)
+      if (requestStore.mayHaveModifiedCookies !== false) {
+        appendMutableCookies(headers, requestStore.mutableCookies)
+      }
 
       this.resolvePendingRevalidations(workStore, requestStore, context)
 
@@ -492,7 +494,10 @@ export class AppRouteRouteModule extends RouteModule<
     // It's possible cookies were set in the handler, so we need to merge the
     // modified cookies and the returned response here.
     const headers = new Headers(res.headers)
-    if (appendMutableCookies(headers, requestStore.mutableCookies)) {
+    if (
+      requestStore.mayHaveModifiedCookies !== false &&
+      appendMutableCookies(headers, requestStore.mutableCookies)
+    ) {
       return new Response(res.body, {
         status: res.status,
         statusText: res.statusText,

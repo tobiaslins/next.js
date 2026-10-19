@@ -153,18 +153,24 @@ export type RequestStoreInputs = {
  * then merge those into the existing cookie object, so that when `cookies()` is accessed
  * it's able to read the newly set cookies.
  */
-function mergeMiddlewareCookies(
-  headers: Headers | IncomingHttpHeaders,
-  existingCookies: RequestCookies | ResponseCookies
-) {
+function hasMiddlewareCookies(
+  headers: Headers | IncomingHttpHeaders
+): headers is IncomingHttpHeaders & { 'x-middleware-set-cookie': string } {
   // TODO: this only fires for `IncomingHttpHeaders`; `Headers` instances
   // silently fall through (the `in` check and bracket access don't reach header
   // values stored in internal slots). Confirm whether edge / Web `Headers`
   // callers need this merge or already handle it elsewhere.
-  if (
+  return (
     'x-middleware-set-cookie' in headers &&
     typeof headers['x-middleware-set-cookie'] === 'string'
-  ) {
+  )
+}
+
+function mergeMiddlewareCookies(
+  headers: Headers | IncomingHttpHeaders,
+  existingCookies: RequestCookies | ResponseCookies
+) {
+  if (hasMiddlewareCookies(headers)) {
     const setCookieValue = headers['x-middleware-set-cookie']
     const responseHeaders = new Headers()
 
@@ -319,6 +325,12 @@ export function createRequestStore(inputs: RequestStoreInputs): RequestStore {
         cache.mutableCookies = mutableCookies
       }
       return cache.mutableCookies
+    },
+    get mayHaveModifiedCookies() {
+      // Creating `mutableCookies` copies every request cookie, so it's only
+      // worth doing when it can contain modifications: it was already used, or
+      // middleware set cookies that get merged into it.
+      return cache.mutableCookies !== undefined || hasMiddlewareCookies(headers)
     },
     get userspaceMutableCookies() {
       if (!cache.userspaceMutableCookies) {
