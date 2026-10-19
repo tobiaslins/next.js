@@ -230,7 +230,30 @@ export abstract class RouteModule<
     }
   }
 
-  private loadManifests(
+  private readonly cachedManifests = new Map<
+    string,
+    ReturnType<RouteModule['loadManifestsUncached']>
+  >()
+
+  private loadManifests(srcPage: string, projectDir?: string) {
+    // Outside of development each manifest is loaded once, frozen and cached
+    // by `loadManifestFromRelativePath`, so the combined result is the same
+    // for every request. Building it again on each request was a measurable
+    // part of every request's CPU time.
+    if (this.isDev || process.env.NEXT_RUNTIME === 'edge') {
+      return this.loadManifestsUncached(srcPage, projectDir)
+    }
+
+    const key = `${srcPage}\0${projectDir}\0${this.distDir}`
+    let manifests = this.cachedManifests.get(key)
+    if (manifests === undefined) {
+      manifests = this.loadManifestsUncached(srcPage, projectDir)
+      this.cachedManifests.set(key, manifests)
+    }
+    return manifests
+  }
+
+  private loadManifestsUncached(
     srcPage: string,
     projectDir?: string
   ): {
