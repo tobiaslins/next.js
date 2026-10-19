@@ -1,15 +1,39 @@
 import { workAsyncStorage } from '../app-render/work-async-storage.external'
 import { workUnitAsyncStorage } from '../app-render/work-unit-async-storage.external'
-import { abortOnSynchronousPlatformIOAccess } from '../app-render/dynamic-rendering'
-import { RenderStage } from '../app-render/staged-rendering'
-import { applyOwnerStack } from '../dynamic-rendering-utils'
-import {
-  createSyncIOClientError,
-  createSyncIOError,
-  createSyncIORuntimeError,
-  type SyncIOApiType,
-} from '../app-render/sync-io-messages'
+import type { SyncIOApiType } from '../app-render/sync-io-messages'
 import { InvariantError } from '../../shared/lib/invariant-error'
+
+// These modules are only needed while rendering, so they are loaded on first
+// use instead of when the node environment is installed. This keeps them (and
+// everything they import) out of the cold start of functions that never
+// render, like proxy.ts and route handlers.
+let renderingModules:
+  | {
+      abortOnSynchronousPlatformIOAccess: typeof import('../app-render/dynamic-rendering').abortOnSynchronousPlatformIOAccess
+      RenderStage: typeof import('../app-render/staged-rendering').RenderStage
+      applyOwnerStack: typeof import('../dynamic-rendering-utils').applyOwnerStack
+      syncIOMessages: typeof import('../app-render/sync-io-messages')
+    }
+  | undefined
+
+function getRenderingModules() {
+  if (renderingModules === undefined) {
+    renderingModules = {
+      abortOnSynchronousPlatformIOAccess: (
+        require('../app-render/dynamic-rendering') as typeof import('../app-render/dynamic-rendering')
+      ).abortOnSynchronousPlatformIOAccess,
+      RenderStage: (
+        require('../app-render/staged-rendering') as typeof import('../app-render/staged-rendering')
+      ).RenderStage,
+      applyOwnerStack: (
+        require('../dynamic-rendering-utils') as typeof import('../dynamic-rendering-utils')
+      ).applyOwnerStack,
+      syncIOMessages:
+        require('../app-render/sync-io-messages') as typeof import('../app-render/sync-io-messages'),
+    }
+  }
+  return renderingModules
+}
 
 export function io(expression: string, type: SyncIOApiType) {
   const workUnitStore = workUnitAsyncStorage.getStore()
@@ -18,6 +42,17 @@ export function io(expression: string, type: SyncIOApiType) {
   if (!workUnitStore || !workStore) {
     return
   }
+
+  const {
+    abortOnSynchronousPlatformIOAccess,
+    RenderStage,
+    applyOwnerStack,
+    syncIOMessages: {
+      createSyncIOClientError,
+      createSyncIOError,
+      createSyncIORuntimeError,
+    },
+  } = getRenderingModules()
 
   switch (workUnitStore.type) {
     case 'prerender':
