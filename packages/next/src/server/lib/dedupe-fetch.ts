@@ -1,9 +1,25 @@
 /**
  * Based on https://github.com/facebook/react/blob/d4e78c42a94be027b4dc7ed2659a5fddfbf9bd4e/packages/react/src/ReactFetch.js
  */
-import * as React from 'react'
 import { cloneResponse } from './clone-response'
 import { InvariantError } from '../../shared/lib/invariant-error'
+
+/**
+ * Requests are only deduped inside a React Server Components render, which is
+ * where `React.cache` has a request scope. In Node.js we read React from the
+ * app-page runtime, which registers it when it loads, instead of importing it.
+ * Importing it would load the whole app-page runtime into functions that never
+ * render, like route handlers, just to patch `fetch`.
+ */
+function getServerReact(): typeof import('react') | null {
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    return require('react') as typeof import('react')
+  } else {
+    return (
+      require('../runtime-reacts.external') as typeof import('../runtime-reacts.external')
+    ).getServerReact()
+  }
+}
 
 const simpleCacheKey = '["GET",[],null,"follow",null,null,null,null]' // generateCacheKey(new Request('https://blank'));
 
@@ -42,15 +58,25 @@ type CacheEntry = [
 ]
 
 export function createDedupeFetch(originalFetch: typeof fetch) {
-  const getCacheEntries = React.cache(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- url is the cache key
-    (url: string): CacheEntry[] => []
-  )
+  let getCacheEntries: ((url: string) => CacheEntry[]) | undefined
 
   return function dedupeFetch(
     resource: URL | RequestInfo,
     options?: RequestInit
   ): Promise<Response> {
+    if (getCacheEntries === undefined) {
+      const React = getServerReact()
+      if (React === null) {
+        // React hasn't been loaded, so we can't be inside a render and there
+        // is nothing to dedupe against.
+        return originalFetch(resource, options)
+      }
+      getCacheEntries = React.cache(
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- url is the cache key
+        (url: string): CacheEntry[] => []
+      )
+    }
+
     if (options && options.signal) {
       // If we're passed a signal, then we assume that
       // someone else controls the lifetime of this object and opts out of
